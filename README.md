@@ -1,6 +1,6 @@
 # Lua examples
 
-| Name | Description | Sensors used                                                                 |
+| Name | Description | Sensors used                                                                  |
 |------|-------------|-------------------------------------------------------------------------------|
 
 | adafruit_bmp280.lua | Code for reading temperature and air pressure using a barometric sensor. | [BMP280](https://cdn-shop.adafruit.com/datasheets/BST-BMP280-DS001-11.pdf)📖 [Adafruit](https://www.adafruit.com/product/2651?srsltid=AfmBOoraqYWN2NrbF4Is_Y9qTXpsZ8oj2GNg16er-wD4ysnpkAzkiN6R)🛍️ |
