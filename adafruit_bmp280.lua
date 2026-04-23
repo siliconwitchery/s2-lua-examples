@@ -24,27 +24,11 @@ local function write_reg(reg, val)
     return device.i2c.write(ADDR, string.char(reg, val), cfg)
 end
 
----------------------------------------------------------
--- Read chip ID for debug
----------------------------------------------------------
---local id = read_reg(0xD0)
---local chip_id = id and string.byte(id) or -1
---print(string.format("Chip ID: 0x%02X", chip_id))
-
---if chip_id ~= 0x58 and chip_id ~= 0x60 then
---    print("Error: No BMP280/BME280 detected")
---    return
---end
-
----------------------------------------------------------
 -- Soft reset
----------------------------------------------------------
 write_reg(0xE0, 0xB6)
 device.sleep(0.1)
 
----------------------------------------------------------
 -- Read calibration data (24 bytes)
----------------------------------------------------------
 local cal = read_reg(0x88, 24)
 if not cal then
     print("Failed to read calibration data")
@@ -81,16 +65,12 @@ local P9 = s16(23, 24)
 
 print("Calibration OK")
 
----------------------------------------------------------
 -- Configure sensor: normal mode, oversampling x1
----------------------------------------------------------
 write_reg(0xF4, 0x27) -- osrs_t=1, osrs_p=1, normal mode
 write_reg(0xF5, 0x00) -- filter off, shortest standby time
 device.sleep(0.1)
 
----------------------------------------------------------
 -- Compensation algorithm (Bosch datasheet)
----------------------------------------------------------
 local function compensate(adc_T, adc_P)
     -- Temperature compensation
     local var1 = (adc_T / 16384.0 - T1 / 1024.0) * T2

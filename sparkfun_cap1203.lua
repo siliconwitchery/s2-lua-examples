@@ -22,9 +22,7 @@ local function read_reg(reg)
     return result.data:byte(1)
 end
 
----------------------------------------------------------
 -- Init CAP1203
----------------------------------------------------------
 function CAP1203.init()
     write_reg(0x00, 0x00)
     device.sleep(0.05)
@@ -37,9 +35,7 @@ function CAP1203.init()
     device.sleep(0.05)
 end
 
----------------------------------------------------------
 -- Read touch status
----------------------------------------------------------
 function CAP1203.getTouch()
     local status = read_reg(0x03)
 
@@ -51,10 +47,7 @@ function CAP1203.getTouch()
     return status & 0x07
 end
 
-
----------------------------------------------------------
--- MAIN TEST LOOP, this is very slow with the prints, would most likely get better feedback with a LED screen for example.
----------------------------------------------------------
+-- MAIN TEST LOOP, this is very slow with the prints, would most likely get better feedback with a LED screen or other hardware.
 
 print("Init CAP1203...")
 CAP1203.init()

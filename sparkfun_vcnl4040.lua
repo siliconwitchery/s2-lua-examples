@@ -1,6 +1,4 @@
----------------------------------------------------------
 -- Bit-bang I2C on A0 (SDA) and A1 (SCL) with OPEN-DRAIN
----------------------------------------------------------
 
 device.power.set_vout(3.3)
 device.sleep(1)
@@ -12,9 +10,7 @@ local function i2c_delay()
     device.sleep(0.0002)
 end
 
----------------------------------------------------------
 -- OPEN-DRAIN IMPLEMENTATION
----------------------------------------------------------
 
 local function sda_high()
     device.digital.get_input(SDA, {pull="PULL_UP"})
@@ -36,10 +32,7 @@ local function sda_read()
     return device.digital.get_input(SDA, {pull="PULL_UP"})
 end
 
----------------------------------------------------------
 -- START / STOP
----------------------------------------------------------
-
 local function i2c_start()
     sda_high()
     scl_high()
@@ -57,10 +50,7 @@ local function i2c_stop()
     i2c_delay()
 end
 
----------------------------------------------------------
 -- WRITE BYTE
----------------------------------------------------------
-
 local function i2c_write_byte(b)
     for i = 7, 0, -1 do
         if (b >> i) & 1 == 1 then sda_high() else sda_low() end
@@ -78,10 +68,7 @@ local function i2c_write_byte(b)
     return ack
 end
 
----------------------------------------------------------
 -- READ BYTE
----------------------------------------------------------
-
 local function i2c_read_byte(ack)
     local value = 0
     sda_high()
@@ -104,10 +91,7 @@ local function i2c_read_byte(ack)
     return value
 end
 
----------------------------------------------------------
 -- VCNL4040 REGISTER ACCESS
----------------------------------------------------------
-
 local VCNL_ADDR = 0x60
 
 local function vcnl_read_register(reg)
@@ -144,11 +128,7 @@ local function vcnl_read_als()
     return vcnl_read_register(0x09)
 end
 
----------------------------------------------------------
 -- TEST PROGRAM
----------------------------------------------------------
-
-
 vcnl_init()
 
 -- CHECK ID
