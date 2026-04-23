@@ -3,8 +3,8 @@
 <table>
   <tr>
     <th>Name</th>
-    <th>Description</th>
-    <th style="width: 360px;">Sensors used</th>
+    <th style="width: 220px;">Description</th>
+    <th style="width: 420px;">Sensors used</th>
   </tr>
 
   <tr>
