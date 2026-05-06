@@ -17,13 +17,9 @@ local FLAG_Z = 0x08
 local ZYX = FLAG_Z + FLAG_Y + FLAG_X   -- 0x0E
 
 local function write_read(cmd, rx_len)
-    device.i2c.write(MLX.addr, string.char(cmd), {
-        scl_pin="A1", sda_pin="A0", frequency=100
-    })
+    device.i2c.write(MLX.addr, string.char(cmd))
 
-    local r = device.i2c.read(MLX.addr, rx_len, {
-        scl_pin="A1", sda_pin="A0", frequency=100
-    })
+    local r = device.i2c.read(MLX.addr, rx_len)
 
     if not r.success then return nil end
     return r.data
@@ -69,4 +65,3 @@ while true do
     end
     device.sleep(1)
 end
-
