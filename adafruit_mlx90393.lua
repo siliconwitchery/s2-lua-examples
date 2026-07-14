@@ -41,14 +41,18 @@ end
 
 -- Exit any running measurement mode before resetting. This also doubles as a
 -- presence check since the MLX90393 has no ID register
-if not command(CMD_EX, 1) then
-    error("MLX90393 not found")
+local status = command(CMD_EX, 1)
+if not status then
+    error("No response from address 0x18. Check the wiring and port")
 end
+print(string.format("Exit command status: 0x%02X", status:byte(1)))
 device.sleep(0.1)
 
-if not command(CMD_RT, 1) then
+status = command(CMD_RT, 1)
+if not status then
     error("MLX90393 reset failed")
 end
+print(string.format("Reset command status: 0x%02X", status:byte(1)))
 device.sleep(0.1)
 
 while true do
@@ -62,12 +66,17 @@ while true do
     -- order. Bit 4 of the status byte flags an error
     local raw = command(CMD_RM | ZYX, 7)
 
-    if raw and raw:byte(1) & 0x10 == 0 then
+    if not raw then
+        print("Measurement read failed")
+    elseif raw:byte(1) & 0x10 ~= 0 then
+        print(string.format("Error flag set in status byte: 0x%02X", raw:byte(1)))
+    else
         local x = to_int16(raw:byte(2), raw:byte(3))
         local y = to_int16(raw:byte(4), raw:byte(5))
         local z = to_int16(raw:byte(6), raw:byte(7))
 
-        print(string.format("X: %d, Y: %d, Z: %d", x, y, z))
+        print(string.format("Status: 0x%02X, raw counts X: %d, Y: %d, Z: %d",
+            raw:byte(1), x, y, z))
 
         -- Send the raw counts to Superstack. Their scale in uT depends on
         -- the configured gain and resolution
@@ -76,8 +85,6 @@ while true do
             y = y,
             z = z
         }
-    else
-        print("MLX90393 read failed")
     end
 
     device.sleep(2)

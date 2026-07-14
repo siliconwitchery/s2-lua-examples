@@ -7,10 +7,17 @@ local CAP1203_ADDRESS = 0x28
 device.power.set_vout(3.3)
 device.sleep(0.1)
 
--- Check the product ID register (0xFD), which always reads 0x6D on a CAP1203
+-- Probe the product ID register (0xFD), which always reads 0x6D on a CAP1203
 local response = device.i2c.write_read(CAP1203_ADDRESS, "\xFD", 1)
-if not response.success or response.data:byte(1) ~= 0x6D then
-    error("CAP1203 not found")
+
+if not response.success then
+    error("No response from address 0x28. Check the wiring and port")
+end
+
+print(string.format("Product ID: 0x%02X", response.data:byte(1)))
+
+if response.data:byte(1) ~= 0x6D then
+    error("Unexpected product ID. Expected 0x6D")
 end
 
 -- Multiple touch config (0x2A): disable blocking so that simultaneous
@@ -40,8 +47,7 @@ while true do
         if pads ~= last_pads then
             last_pads = pads
 
-            print(string.format("Pads: 1=%s 2=%s 3=%s",
-                pads & 0x01 ~= 0, pads & 0x02 ~= 0, pads & 0x04 ~= 0))
+            print(string.format("Input status register: 0x%02X", pads))
 
             network.send_data {
                 pad_1 = pads & 0x01 ~= 0,

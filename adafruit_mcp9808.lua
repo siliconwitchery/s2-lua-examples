@@ -7,10 +7,17 @@ local MCP9808_ADDRESS = 0x18
 device.power.set_vout(3.3)
 device.sleep(0.1)
 
--- Check the manufacturer ID register (0x06) which always reads 0x0054
+-- Probe the manufacturer ID register (0x06), which always reads 0x00 0x54
 local id = device.i2c.write_read(MCP9808_ADDRESS, "\x06", 2)
-if not id.success or id.data:byte(1) ~= 0x00 or id.data:byte(2) ~= 0x54 then
-    error("MCP9808 not found")
+
+if not id.success then
+    error("No response from address 0x18. Check the wiring and port")
+end
+
+print(string.format("Manufacturer ID: 0x%02X 0x%02X", id.data:byte(1), id.data:byte(2)))
+
+if id.data:byte(1) ~= 0x00 or id.data:byte(2) ~= 0x54 then
+    error("Unexpected manufacturer ID. Expected 0x00 0x54")
 end
 
 while true do
@@ -30,7 +37,7 @@ while true do
             temperature = temperature - 256
         end
 
-        print(string.format("Temperature: %.2f C", temperature))
+        print(string.format("Temperature register: 0x%02X%02X (%.2f C)", upper, lower, temperature))
 
         -- Send the value to Superstack
         network.send_data {

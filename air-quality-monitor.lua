@@ -38,10 +38,17 @@ local function ens160_read(reg, len)
     return response.data
 end
 
--- Confirm the sensor is present by checking PART_ID (0x0160 little-endian)
+-- Probe the PART_ID register (0x00), which always reads 0x60 0x01
 local part_id = ens160_read(0x00, 2)
-if not part_id or (string.byte(part_id, 1) | (string.byte(part_id, 2) << 8)) ~= 0x0160 then
-    error("ENS160 not found on port F")
+
+if not part_id then
+    error("No response from the ENS160 at address 0x53 on port F. Check the wiring")
+end
+
+print(string.format("ENS160 part ID: 0x%02X 0x%02X", string.byte(part_id, 1), string.byte(part_id, 2)))
+
+if (string.byte(part_id, 1) | (string.byte(part_id, 2) << 8)) ~= 0x0160 then
+    error("Unexpected ENS160 part ID. Expected 0x60 0x01")
 end
 
 -- OPMODE 0x02 = standard gas sensing mode
@@ -74,6 +81,7 @@ local function read_sht45()
 
     local d = response.data
     if crc8(d:sub(1, 2)) ~= string.byte(d, 3) or crc8(d:sub(4, 5)) ~= string.byte(d, 6) then
+        print(string.format("SHT45 CRC check failed on: 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X", d:byte(1, 6)))
         return nil
     end
 

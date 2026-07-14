@@ -49,9 +49,17 @@ local function us_to_mclks(timeout_us, vcsel_period_pclks)
     return ((timeout_us * 1000) + (macro_period_ns / 2)) / macro_period_ns
 end
 
--- The model ID register always reads 0xEE
-if r8(0xC0) ~= 0xEE then
-    error("VL53L0X not found")
+-- Probe the model ID register (0xC0), which always reads 0xEE
+local model_id = device.i2c.write_read(VL53L0X_ADDRESS, "\xC0", 1)
+
+if not model_id.success then
+    error("No response from address 0x29. Check the wiring and port")
+end
+
+print(string.format("Model ID: 0x%02X", model_id.value))
+
+if model_id.value ~= 0xEE then
+    error("Unexpected model ID. Expected 0xEE")
 end
 
 -- Use 2.8V IO mode since the IO is powered at 3.3V
@@ -95,6 +103,9 @@ w8(0x83, 0x01)
 local spad_info = r8(0x92)
 local spad_count = spad_info & 0x7F
 local spad_type_is_aperture = (spad_info >> 7) & 0x01
+
+print(string.format("Reference SPADs: %d, aperture type: %s",
+    spad_count, spad_type_is_aperture == 1 and "yes" or "no"))
 
 w8(0x81, 0x00)
 w8(0xFF, 0x06)
@@ -222,6 +233,8 @@ end
 if enables.final_range > 0 then
     measurement_budget_us = measurement_budget_us + final_range_us + 550
 end
+
+print(string.format("Measurement timing budget: %d us", math.floor(measurement_budget_us)))
 
 -- Disable MSRC and TCC, then reapply the same budget so the final range
 -- timeout gets recalculated for the new sequence

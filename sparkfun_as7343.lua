@@ -9,11 +9,18 @@ device.power.set_vout(3.3)
 -- CFG0: set the REG_BANK bit to access the registers below 0x80
 device.i2c.write(AS7343_I2C_ADDRESS, "\xBF\x10")
 
--- ID: check the chip identification register (0x81 for the AS7343). It sits
--- below 0x80, so it must be read while REG_BANK is set
+-- Probe the chip identification register (0x5A), which always reads 0x81 on
+-- an AS7343. It sits below 0x80, so it must be read while REG_BANK is set
 local id = device.i2c.write_read(AS7343_I2C_ADDRESS, "\x5A", 1)
-if not id.success or string.byte(id.data, 1) ~= 0x81 then
-    error("AS7343 not found")
+
+if not id.success then
+    error("No response from address 0x39. Check the wiring and port")
+end
+
+print(string.format("ID register: 0x%02X", string.byte(id.data, 1)))
+
+if string.byte(id.data, 1) ~= 0x81 then
+    error("Unexpected chip ID. Expected 0x81")
 end
 
 -- ENABLE: set PON to power up the sensor core. Bit 7 of the value is a
@@ -59,7 +66,7 @@ while true do
     if response.success then
         local data = response.data
 
-        print(string.format("450nm: %d | 550nm: %d | 640nm: %d",
+        print(string.format("Counts: 450nm=%d 550nm=%d 640nm=%d",
             channel(data, 1), channel(data, 31), channel(data, 19)))
 
         -- The auto-SMUX readout is three cycles of six channels each:
@@ -82,6 +89,8 @@ while true do
             ["745nm"] = channel(data, 29),
             ["550nm"] = channel(data, 31),
         }
+    else
+        print("Data read failed")
     end
 
     -- Repeat every second

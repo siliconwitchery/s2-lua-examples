@@ -39,8 +39,10 @@ for _, address in ipairs({ 0x77, 0x76 }) do
 end
 
 if not BMP280_ADDRESS then
-    error("BMP280 not found on port A")
+    error("No response with a valid chip ID from 0x77 or 0x76 on port A. Check the wiring")
 end
+
+print(string.format("BMP280 found at address 0x%02X", BMP280_ADDRESS))
 
 -- Read register(s) from the BMP280
 local function read_reg(reg, len)
@@ -261,8 +263,8 @@ while true do
         local level, description = forecast(sea_level, change_1h, change_3h)
 
         print(string.format(
-            "%.2f C | %.1f %%RH | dew %.1f C | %.2f hPa (sea level) | 3h change: %s | %s",
-            temperature, humidity, dew, sea_level,
+            "%.2f hPa raw, %.2f hPa at sea level | history %d/%d | 3h change: %s | %s",
+            pressure, sea_level, #history, HISTORY_MAX,
             change_3h and string.format("%+.2f hPa", change_3h) or "n/a",
             description))
 
@@ -280,7 +282,7 @@ while true do
             forecast = description
         }
     else
-        print("Sensor read error")
+        print("Sensor read failed")
     end
 
     device.sleep(SAMPLE_INTERVAL)

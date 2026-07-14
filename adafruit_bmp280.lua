@@ -14,10 +14,17 @@ local function read_reg(reg, len)
     return response.data
 end
 
--- The chip ID register (0xD0) should return 0x58
+-- Probe the chip ID register (0xD0), which always reads 0x58
 local id = read_reg(0xD0)
-if not id or string.byte(id, 1) ~= 0x58 then
-    error("BMP280 not found")
+
+if not id then
+    error("No response from address 0x77. Check the wiring and port")
+end
+
+print(string.format("Chip ID: 0x%02X", string.byte(id, 1)))
+
+if string.byte(id, 1) ~= 0x58 then
+    error("Unexpected chip ID. Expected 0x58")
 end
 
 -- Soft reset
@@ -100,7 +107,7 @@ while true do
 
         local temperature, pressure = compensate(adc_T, adc_P)
 
-        print(string.format("Temperature: %.2f C | Pressure: %.2f hPa", temperature, pressure))
+        print(string.format("Raw ADC: T=%d P=%d (%.2f C, %.2f hPa)", adc_T, adc_P, temperature, pressure))
 
         -- Send the values to Superstack
         network.send_data {
@@ -108,7 +115,7 @@ while true do
             pressure = pressure
         }
     else
-        print("Read error")
+        print("Measurement read failed")
     end
 
     device.sleep(3)

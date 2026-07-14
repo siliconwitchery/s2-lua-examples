@@ -207,7 +207,7 @@ local function setup_nfc()
 
     -- The first two bytes are the 16 bit destination address in user memory
     if not device.i2c.write(ST25DV_ADDRESS, "\x00\x00" .. ndef, PORT_F).success then
-        error("ST25DV not responding on port F")
+        error("No response from the ST25DV at address 0x53 on port F. Check the wiring")
     end
 end
 
@@ -245,10 +245,18 @@ end
 
 -- Put the ENS160 into gas sensing mode and give it a calibration point
 local function init_ens160(temperature)
-    -- The PART_ID register (0x00) always reads 0x0160
+    -- Probe the PART_ID register (0x00), which always reads 0x60 0x01
     local response = device.i2c.write_read(ENS160_ADDRESS, "\x00", 2, PORT_E)
-    if not response.success or response.data ~= "\x60\x01" then
-        error("ENS160 not found on port E")
+
+    if not response.success then
+        error("No response from the ENS160 at address 0x53 on port E. Check the wiring")
+    end
+
+    print(string.format("ENS160 part ID: 0x%02X 0x%02X",
+        response.data:byte(1), response.data:byte(2)))
+
+    if response.data ~= "\x60\x01" then
+        error("Unexpected ENS160 part ID. Expected 0x60 0x01")
     end
 
     -- Standard gas sensing operating mode (OPMODE register)
@@ -306,7 +314,7 @@ end
 
 -- The SSD1309 has no ID register, so check that it acknowledges a command
 if not oled_command(DISPLAY_OFF).success then
-    error("SSD1309 not responding on port F")
+    error("No response from the SSD1309 at address 0x3C on port F. Check the wiring")
 end
 
 -- Configure the controller and clear its RAM while the panel is still off so
@@ -316,10 +324,19 @@ end
 oled_init()
 oled_clear()
 
--- The MCP9808 manufacturer ID register (0x06) always reads 0x0054
+-- Probe the MCP9808 manufacturer ID register (0x06), which always reads
+-- 0x00 0x54
 local response = device.i2c.write_read(MCP9808_ADDRESS, "\x06", 2, PORT_F)
-if not response.success or response.data ~= "\x00\x54" then
-    error("MCP9808 not found on port F")
+
+if not response.success then
+    error("No response from the MCP9808 at address 0x18 on port F. Check the wiring")
+end
+
+print(string.format("MCP9808 manufacturer ID: 0x%02X 0x%02X",
+    response.data:byte(1), response.data:byte(2)))
+
+if response.data ~= "\x00\x54" then
+    error("Unexpected MCP9808 manufacturer ID. Expected 0x00 0x54")
 end
 
 local temperature = read_temperature()
@@ -432,7 +449,7 @@ while true do
     -- are omitted until the ENS160 has produced a valid reading
     if data_log_counter == 0 then
         print(string.format(
-            "%.2f C | %s | %d scans",
+            "Reporting to Superstack: %.2f C | %s | %d scans",
             temperature,
             eco2 and string.format("eCO2 %d ppm | TVOC %d ppb | AQI %d", eco2, tvoc, aqi)
                 or "air quality warming up",
