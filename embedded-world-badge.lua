@@ -59,23 +59,23 @@ local function oled_command(command)
     return device.i2c.write(OLED_ADDRESS, "\x00" .. command, PORT_F)
 end
 
-local function oled_data(data)
-    device.i2c.write(OLED_ADDRESS, "\x40" .. data, PORT_F)
-end
-
 -- Point the write window at the full display width across a range of pages,
 -- where each page is an 8 pixel tall row. These window commands only apply
 -- once the controller is in horizontal addressing mode
 local function oled_set_window(first_page, last_page)
     oled_command("\x21\x00\x7F") -- columns 0 to 127
-    oled_command("\x22" .. string.char(first_page, last_page))
+    oled_command(string.char(0x22, first_page, last_page))
 end
+
+-- One blank page of pixel data behind the 0x40 data control byte. Built once
+-- because the S2 has very little RAM to spare for string churn
+local BLANK_PAGE = "\x40" .. string.rep("\x00", 128)
 
 local function oled_clear()
     oled_set_window(0, 3)
 
     for _ = 1, 4 do
-        oled_data(string.rep("\x00", 128))
+        device.i2c.write(OLED_ADDRESS, BLANK_PAGE, PORT_F)
     end
 end
 
@@ -149,48 +149,64 @@ local font = {
 }
 
 -- Write a line of text to one of the four display rows. Each glyph is 5
--- columns plus a 1 column gap, so 20 characters fill the width
+-- columns plus a 1 column gap, so up to 21 characters fit the width. Pixel
+-- data is collected in a table and concatenated once at the end: growing a
+-- string with .. inside a loop copies it every iteration, which exhausts
+-- the S2's small Lua heap
 local function oled_write_text(text, row)
-    while #text < 20 do text = text .. " " end
+    local parts = { "\x40" }
+
+    for i = 1, 21 do
+        parts[2 * i] = font[text:sub(i, i)] or font[" "]
+        parts[2 * i + 1] = "\x00"
+    end
 
     oled_set_window(row, row)
-
-    local data = ""
-    for i = 1, #text do
-        local character = text:sub(i, i)
-        data = data .. (font[character] or "\x00\x00\x00\x00\x00") .. "\x00"
-    end
-
-    oled_data(data)
+    device.i2c.write(OLED_ADDRESS, table.concat(parts), PORT_F)
 end
 
--- Write text shifted down by a number of pixels so that it straddles rows 0
--- and 1, splitting each glyph column across the two pages
-local function oled_write_text_offset(text, offset)
-    while #text < 20 do text = text .. " " end
+-- Render text shifted down by a number of pixels into two page buffers so it
+-- straddles rows 0 and 1, splitting each glyph column across the two pages.
+-- Building these strings is comparatively expensive, so callers should cache
+-- the result rather than render every tick
+local function render_offset_text(text, offset)
+    local top = { "\x40" }
+    local bottom = { "\x40" }
 
-    local top = ""
-    local bottom = ""
+    for i = 1, 21 do
+        local glyph = font[text:sub(i, i)] or font[" "]
+        local b1, b2, b3, b4, b5 = glyph:byte(1, 5)
 
-    for i = 1, #text do
-        local character = text:sub(i, i)
-        local glyph = font[character] or "\x00\x00\x00\x00\x00"
+        top[i + 1] = string.char(
+            (b1 << offset) & 0xFF,
+            (b2 << offset) & 0xFF,
+            (b3 << offset) & 0xFF,
+            (b4 << offset) & 0xFF,
+            (b5 << offset) & 0xFF,
+            0x00)
 
-        for column = 1, 5 do
-            local bits = glyph:byte(column)
-            top = top .. string.char((bits << offset) & 0xFF)
-            bottom = bottom .. string.char(bits >> (8 - offset))
-        end
-
-        top = top .. "\x00"
-        bottom = bottom .. "\x00"
+        bottom[i + 1] = string.char(
+            b1 >> (8 - offset),
+            b2 >> (8 - offset),
+            b3 >> (8 - offset),
+            b4 >> (8 - offset),
+            b5 >> (8 - offset),
+            0x00)
     end
 
+    return table.concat(top), table.concat(bottom)
+end
+
+-- The idle banner never changes, so render it once at startup instead of
+-- rebuilding it on every 0.1 second tick
+local BANNER_TOP, BANNER_BOTTOM = render_offset_text("   Silicon Witchery", 4)
+
+local function oled_write_banner()
     oled_set_window(0, 0)
-    oled_data(top)
+    device.i2c.write(OLED_ADDRESS, BANNER_TOP, PORT_F)
 
     oled_set_window(1, 1)
-    oled_data(bottom)
+    device.i2c.write(OLED_ADDRESS, BANNER_BOTTOM, PORT_F)
 end
 
 -- Write an NDEF message to the start of the ST25DV user memory so that any
@@ -387,7 +403,7 @@ while true do
             oled_power(true)
             oled_clear()
             oled_write_text(" Thanks for the scan!", 1)
-            oled_write_text("    Total scans: " .. string.format("%d", total_scans), 3)
+            oled_write_text(string.format("    Total scans: %d", total_scans), 3)
 
             -- Give the user a moment to see that the scan was registered
             device.sleep(1.5)
@@ -400,20 +416,20 @@ while true do
         phone_previously_present = false
 
         if power_save_counter > COUNTDOWN_TICKS then
-            oled_write_text_offset("   Silicon Witchery", 4)
+            oled_write_banner()
 
             -- Blink the temperature at 1Hz while it is over the warning level
             if temperature > TEMPERATURE_WARNING then
                 temperature_blink_count = temperature_blink_count + 1
 
                 if temperature_blink_count % 10 < 5 then
-                    oled_write_text("    Temp: " .. string.format("%0.2f", temperature) .. " *C", 2)
+                    oled_write_text(string.format("    Temp: %0.2f *C", temperature), 2)
                 else
                     oled_write_text(" ", 2)
                 end
             else
                 temperature_blink_count = 0
-                oled_write_text("    Temp: " .. string.format("%0.2f", temperature) .. " *C", 2)
+                oled_write_text(string.format("    Temp: %0.2f *C", temperature), 2)
             end
 
             -- And the same for the eCO2 reading. The row stays blank until
@@ -423,13 +439,13 @@ while true do
                     eco2_blink_count = eco2_blink_count + 1
 
                     if eco2_blink_count % 10 < 5 then
-                        oled_write_text("    eCO2: " .. string.format("%0.0f", eco2) .. " ppm", 3)
+                        oled_write_text(string.format("    eCO2: %d ppm", eco2), 3)
                     else
                         oled_write_text(" ", 3)
                     end
                 else
                     eco2_blink_count = 0
-                    oled_write_text("    eCO2: " .. string.format("%0.0f", eco2) .. " ppm", 3)
+                    oled_write_text(string.format("    eCO2: %d ppm", eco2), 3)
                 end
             end
 
@@ -439,7 +455,7 @@ while true do
             power_save_counter = power_save_counter - 1
         elseif power_save_counter >= 1 then
             oled_write_text("    Goin' to sleep", 1)
-            oled_write_text("        in " .. string.format("%d", power_save_counter // 10), 2)
+            oled_write_text(string.format("        in %d", power_save_counter // 10), 2)
             power_save_counter = power_save_counter - 1
         end
     end
