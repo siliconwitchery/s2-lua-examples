@@ -1,5 +1,6 @@
 -- Read ambient light from a VCNL4040 and send it to Superstack.
--- Registers are 16-bit little-endian: write [reg, lsb, msb], reads return lsb then msb
+-- Registers are 16-bit little-endian and are accessed by writing the command
+-- code as one transaction, then reading two bytes (lsb then msb) as another
 
 local VCNL4040_ADDRESS = 0x60
 
@@ -8,10 +9,14 @@ device.power.set_vout(3.3)
 device.sleep(0.1)
 
 -- Probe the ID register (0x0C), which always reads 0x86 0x01
-local id = device.i2c.write_read(VCNL4040_ADDRESS, "\x0C", 2)
+if not device.i2c.write(VCNL4040_ADDRESS, "\x0C").success then
+    error("No response from address 0x60. Check the wiring and port")
+end
+
+local id = device.i2c.read(VCNL4040_ADDRESS, 2)
 
 if not id.success then
-    error("No response from address 0x60. Check the wiring and port")
+    error("Failed to read the ID register")
 end
 
 print(string.format("ID register: 0x%02X 0x%02X", id.data:byte(1), id.data:byte(2)))
@@ -30,7 +35,8 @@ device.sleep(0.1)
 
 while true do
     -- Read the raw counts from the ALS output register (0x09)
-    local result = device.i2c.write_read(VCNL4040_ADDRESS, "\x09", 2)
+    device.i2c.write(VCNL4040_ADDRESS, "\x09")
+    local result = device.i2c.read(VCNL4040_ADDRESS, 2)
 
     if result.success then
         local counts = result.data:byte(1) | (result.data:byte(2) << 8)
