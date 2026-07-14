@@ -1,19 +1,36 @@
+-- Reads the ambient temperature from an MCP9808 sensor and sends it to
+-- Superstack every 5 seconds
+
 local MCP9808_ADDRESS = 0x18
 
--- Sensor requires 3.3V power
+-- Sensor requires 3.3V power. Let the rail settle before probing
 device.power.set_vout(3.3)
+device.sleep(0.1)
+
+-- Check the manufacturer ID register (0x06) which always reads 0x0054
+local id = device.i2c.write_read(MCP9808_ADDRESS, "\x06", 2)
+if not id.success or id.data:byte(1) ~= 0x00 or id.data:byte(2) ~= 0x54 then
+    error("MCP9808 not found")
+end
 
 while true do
-    -- Read two bytes from the 0x05 register
+    -- Read two bytes from the ambient temperature register (0x05)
     local result = device.i2c.write_read(MCP9808_ADDRESS, "\x05", 2)
 
     if result.success then
-        print("Read 2 bytes from register 0x05")
-
-        -- Convert the 16bit data into a temperature value
         local upper = result.data:byte(1)
         local lower = result.data:byte(2)
-        local temperature = ((upper & 0x1F) * 256 + lower) / 16.0
+
+        -- The upper 3 bits are alert flags and bit 4 is the sign, leaving a
+        -- 12 bit temperature in steps of 1/16th of a degree
+        local temperature = ((upper & 0x0F) * 256 + lower) / 16.0
+
+        -- Apply two's complement for temperatures below 0 C
+        if upper & 0x10 ~= 0 then
+            temperature = temperature - 256
+        end
+
+        print(string.format("Temperature: %.2f C", temperature))
 
         -- Send the value to Superstack
         network.send_data {

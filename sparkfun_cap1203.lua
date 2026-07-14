@@ -1,64 +1,54 @@
+-- Reads the three touch pads on a SparkFun Qwiic CAP1203 and sends the pad
+-- states to Superstack whenever they change
+
+local CAP1203_ADDRESS = 0x28
+
+-- Sensor requires 3.3V power
 device.power.set_vout(3.3)
-device.sleep(1)
+device.sleep(0.1)
 
-
-local CAP1203 = {}
-CAP1203.ADDR = 0x28   -- SparkFun Qwiic CAP1203 fixed address
-
-local cfg = {scl_pin="A1", sda_pin="A0", frequency=100}
-
-local function write_reg(reg, value)
-    device.i2c.write(CAP1203.ADDR, string.char(reg, value), cfg)
+-- Check the product ID register (0xFD), which always reads 0x6D on a CAP1203
+local response = device.i2c.write_read(CAP1203_ADDRESS, "\xFD", 1)
+if not response.success or response.data:byte(1) ~= 0x6D then
+    error("CAP1203 not found")
 end
 
-local function read_reg(reg)
-    device.i2c.write(CAP1203.ADDR, string.char(reg), cfg)
-    local result = device.i2c.read(CAP1203.ADDR, 1, cfg)
+-- Multiple touch config (0x2A): disable blocking so that simultaneous
+-- touches on different pads are all reported
+device.i2c.write(CAP1203_ADDRESS, "\x2A\x00")
 
-    if not result or not result.data or #result.data == 0 then
-        return 0
-    end
+-- Main control (0x00): clear the INT bit so touch detection starts fresh
+device.i2c.write(CAP1203_ADDRESS, "\x00\x00")
 
-    return result.data:byte(1)
-end
+print("CAP1203 running")
 
--- Init CAP1203
-function CAP1203.init()
-    write_reg(0x00, 0x00)
-    device.sleep(0.05)
-
-    write_reg(0x21, 0x07)
-    write_reg(0x2A, 0x00)
-    write_reg(0x1F, 0x40)
-    write_reg(0x00, 0x00)
-
-    device.sleep(0.05)
-end
-
--- Read touch status
-function CAP1203.getTouch()
-    local status = read_reg(0x03)
-
-    -- Clear interrupt so the sensor can detect new touches
-    if status ~= 0 then
-        write_reg(0x00, 0x00)
-    end
-
-    return status & 0x07
-end
-
--- MAIN TEST LOOP, this is very slow with the prints, would most likely get better feedback with a LED screen or other hardware.
-
-print("Init CAP1203...")
-CAP1203.init()
+local last_pads = 0
 
 while true do
-    local t = CAP1203.getTouch()
+    -- Sensor input status (0x03): bits 0-2 are pads 1-3
+    local result = device.i2c.write_read(CAP1203_ADDRESS, "\x03", 1)
 
-    if t ~= 0 then
-        if (t & 0x01) ~= 0 then print("Pad 1 touched") end
-        if (t & 0x02) ~= 0 then print("Pad 2 touched") end
-        if (t & 0x04) ~= 0 then print("Pad 3 touched") end
+    if result.success then
+        local pads = result.data:byte(1) & 0x07
+
+        -- The status bits latch after a touch ends, so clear the INT bit to
+        -- let them update again
+        if pads ~= 0 then
+            device.i2c.write(CAP1203_ADDRESS, "\x00\x00")
+        end
+
+        if pads ~= last_pads then
+            last_pads = pads
+
+            print(string.format("Pads: 1=%s 2=%s 3=%s",
+                pads & 0x01 ~= 0, pads & 0x02 ~= 0, pads & 0x04 ~= 0))
+
+            network.send_data {
+                pad_1 = pads & 0x01 ~= 0,
+                pad_2 = pads & 0x02 ~= 0,
+                pad_3 = pads & 0x04 ~= 0
+            }
+        end
     end
 
     device.sleep(0.1)

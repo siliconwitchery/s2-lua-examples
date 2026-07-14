@@ -1,146 +1,42 @@
--- Bit-bang I2C on A0 (SDA) and A1 (SCL) with OPEN-DRAIN
+-- Read ambient light from a VCNL4040 and send it to Superstack.
+-- Registers are 16-bit little-endian: write [reg, lsb, msb], reads return lsb then msb
 
+local VCNL4040_ADDRESS = 0x60
+
+-- Sensor requires 3.3V power
 device.power.set_vout(3.3)
-device.sleep(1)
+device.sleep(0.1)
 
-local SDA = "A0"
-local SCL = "A1"
-
-local function i2c_delay()
-    device.sleep(0.0002)
+-- The ID register (0x0C) always reads 0x0186
+local id = device.i2c.write_read(VCNL4040_ADDRESS, "\x0C", 2)
+if not id.success or (id.data:byte(1) | (id.data:byte(2) << 8)) ~= 0x0186 then
+    error("VCNL4040 not found")
 end
 
--- OPEN-DRAIN IMPLEMENTATION
+-- ALS_CONF (0x00): 80ms integration time, interrupts off, ALS powered on
+device.i2c.write(VCNL4040_ADDRESS, "\x00\x00\x00")
 
-local function sda_high()
-    device.digital.get_input(SDA, {pull="PULL_UP"})
-end
+-- Let the first 80ms integration complete
+device.sleep(0.1)
 
-local function sda_low()
-    device.digital.set_output(SDA, false)
-end
-
-local function scl_high()
-    device.digital.get_input(SCL, {pull="PULL_UP"})
-end
-
-local function scl_low()
-    device.digital.set_output(SCL, false)
-end
-
-local function sda_read()
-    return device.digital.get_input(SDA, {pull="PULL_UP"})
-end
-
--- START / STOP
-local function i2c_start()
-    sda_high()
-    scl_high()
-    i2c_delay()
-    sda_low()
-    i2c_delay()
-    scl_low()
-end
-
-local function i2c_stop()
-    sda_low()
-    scl_high()
-    i2c_delay()
-    sda_high()
-    i2c_delay()
-end
-
--- WRITE BYTE
-local function i2c_write_byte(b)
-    for i = 7, 0, -1 do
-        if (b >> i) & 1 == 1 then sda_high() else sda_low() end
-        i2c_delay()
-        scl_high()
-        i2c_delay()
-        scl_low()
-    end
-
-    sda_high()
-    i2c_delay()
-    scl_high()
-    local ack = not sda_read()
-    scl_low()
-    return ack
-end
-
--- READ BYTE
-local function i2c_read_byte(ack)
-    local value = 0
-    sda_high()
-
-    for i = 7, 0, -1 do
-        scl_high()
-        i2c_delay()
-        if sda_read() then value = value | (1 << i) end
-        scl_low()
-        i2c_delay()
-    end
-
-    if ack then sda_low() else sda_high() end
-    i2c_delay()
-    scl_high()
-    i2c_delay()
-    scl_low()
-    sda_high()
-
-    return value
-end
-
--- VCNL4040 REGISTER ACCESS
-local VCNL_ADDR = 0x60
-
-local function vcnl_read_register(reg)
-    i2c_start()
-    i2c_write_byte(VCNL_ADDR << 1)
-    i2c_write_byte(reg)
-    i2c_start()
-    i2c_write_byte((VCNL_ADDR << 1) | 1)
-    local lsb = i2c_read_byte(true)
-    local msb = i2c_read_byte(false)
-    i2c_stop()
-    return msb * 256 + lsb
-end
-
-local function vcnl_write_register(reg, lsb, msb)
-    i2c_start()
-    i2c_write_byte(VCNL_ADDR << 1)
-    i2c_write_byte(reg)
-    i2c_write_byte(lsb)
-    i2c_write_byte(msb)
-    i2c_stop()
-end
-
-local function vcnl_init()
-    print("Init VCNL4040...")
-
-    -- ALS_CONF: ALS enable, 16-bit, 100ms integration
-    vcnl_write_register(0x00, 0x00, 0x10)
-
-    print("Init done.")
-end
-
-local function vcnl_read_als()
-    return vcnl_read_register(0x09)
-end
-
--- TEST PROGRAM
-vcnl_init()
-
--- CHECK ID
-local id = vcnl_read_register(0x0C)
-print(string.format("ID: %.2f", id))
-
--- This example only makes use of the ALS values
 while true do
-    local als = vcnl_read_als()
+    -- Read the raw counts from the ALS output register (0x09)
+    local result = device.i2c.write_read(VCNL4040_ADDRESS, "\x09", 2)
 
-    print(string.format("ALS: %.2f", als))
+    if result.success then
+        local counts = result.data:byte(1) | (result.data:byte(2) << 8)
 
-    device.sleep(1)
+        -- At 80ms integration time each count is 0.1 lux
+        local light = counts * 0.1
+
+        print(string.format("Light: %.1f lux", light))
+
+        -- Send the value to Superstack
+        network.send_data {
+            light = light
+        }
+    end
+
+    -- Repeat every 2 seconds
+    device.sleep(2)
 end
-

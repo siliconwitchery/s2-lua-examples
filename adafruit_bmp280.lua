@@ -1,38 +1,33 @@
+-- Minimal example for the BMP280 barometric pressure sensor. See
+-- weather-station.lua for a complete application built around this sensor
+
+local BMP280_ADDRESS = 0x77 -- 0x76 if the SDO pin is pulled low
+
+-- Sensor requires 3.3V power
 device.power.set_vout(3.3)
-device.sleep(1)
-
-local ADDR = 0x77
-
--- I2C configuration
-local cfg = {
-    scl_pin = "A1",
-    sda_pin = "A0",
-    frequency = 100
-}
+device.sleep(0.1)
 
 -- Read register(s)
 local function read_reg(reg, len)
-    local ok = device.i2c.write(ADDR, string.char(reg), cfg)
-    if not ok then return nil end
-    local r = device.i2c.read(ADDR, len or 1, cfg)
-    if not r.success then return nil end
-    return r.data
+    local response = device.i2c.write_read(BMP280_ADDRESS, string.char(reg), len or 1)
+    if not response.success then return nil end
+    return response.data
 end
 
--- Write register
-local function write_reg(reg, val)
-    return device.i2c.write(ADDR, string.char(reg, val), cfg)
+-- The chip ID register (0xD0) should return 0x58
+local id = read_reg(0xD0)
+if not id or string.byte(id, 1) ~= 0x58 then
+    error("BMP280 not found")
 end
 
 -- Soft reset
-write_reg(0xE0, 0xB6)
+device.i2c.write(BMP280_ADDRESS, "\xE0\xB6")
 device.sleep(0.1)
 
 -- Read calibration data (24 bytes)
 local cal = read_reg(0x88, 24)
 if not cal then
-    print("Failed to read calibration data")
-    return
+    error("Failed to read calibration data")
 end
 
 -- Unsigned 16-bit
@@ -63,11 +58,8 @@ local P7 = s16(19, 20)
 local P8 = s16(21, 22)
 local P9 = s16(23, 24)
 
-print("Calibration OK")
-
--- Configure sensor: normal mode, oversampling x1
-write_reg(0xF4, 0x27) -- osrs_t=1, osrs_p=1, normal mode
-write_reg(0xF5, 0x00) -- filter off, shortest standby time
+-- Normal mode, temperature and pressure oversampling x1
+device.i2c.write(BMP280_ADDRESS, "\xF4\x27")
 device.sleep(0.1)
 
 -- Compensation algorithm (Bosch datasheet)
@@ -98,29 +90,26 @@ local function compensate(adc_T, adc_P)
     return temp, press / 100.0 -- hPa
 end
 
----------------------------------------------------------
--- Main loop
----------------------------------------------------------
 while true do
-    -- Read raw pressure + temperature (6 bytes)
+    -- Raw pressure and temperature, 20 bits each across 6 bytes
     local raw = read_reg(0xF7, 6)
+
     if raw then
-        local pm  = string.byte(raw, 1)
-        local pl  = string.byte(raw, 2)
-        local pxl = string.byte(raw, 3)
-        local tm  = string.byte(raw, 4)
-        local tl  = string.byte(raw, 5)
-        local txl = string.byte(raw, 6)
+        local adc_P = (string.byte(raw, 1) * 65536 + string.byte(raw, 2) * 256 + string.byte(raw, 3)) // 16
+        local adc_T = (string.byte(raw, 4) * 65536 + string.byte(raw, 5) * 256 + string.byte(raw, 6)) // 16
 
-        local adc_P = (pm * 65536 + pl * 256 + pxl) // 16
-        local adc_T = (tm * 65536 + tl * 256 + txl) // 16
+        local temperature, pressure = compensate(adc_T, adc_P)
 
-        local temp, press = compensate(adc_T, adc_P)
-        print(string.format("Temp: %.2f °C | Pressure: %.2f hPa", temp, press))
+        print(string.format("Temperature: %.2f C | Pressure: %.2f hPa", temperature, pressure))
+
+        -- Send the values to Superstack
+        network.send_data {
+            temperature = temperature,
+            pressure = pressure
+        }
     else
         print("Read error")
     end
 
-    device.sleep(0.5)
+    device.sleep(3)
 end
-
