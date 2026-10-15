@@ -21,7 +21,7 @@ end
 
 print(string.format("ID register: 0x%02X 0x%02X", id.data:byte(1), id.data:byte(2)))
 
-if (id.data:byte(1) | (id.data:byte(2) << 8)) ~= 0x0186 then
+if string.unpack("<I2", id.data) ~= 0x0186 then
     error("Unexpected device ID. Expected 0x86 0x01")
 end
 
@@ -39,7 +39,7 @@ while true do
     local result = device.i2c.read(VCNL4040_ADDRESS, 2)
 
     if result.success then
-        local counts = result.data:byte(1) | (result.data:byte(2) << 8)
+        local counts = string.unpack("<I2", result.data)
 
         -- At 80ms integration time each count is 0.1 lux
         local light = counts * 0.1

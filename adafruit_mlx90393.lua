@@ -30,15 +30,6 @@ local function command(cmd, num_bytes)
     return response.data
 end
 
--- Big-endian signed 16-bit
-local function to_int16(hi, lo)
-    local value = (hi << 8) | lo
-    if value >= 0x8000 then
-        value = value - 0x10000
-    end
-    return value
-end
-
 -- Exit any running measurement mode before resetting. This also doubles as a
 -- presence check since the MLX90393 has no ID register
 local status = command(CMD_EX, 1)
@@ -71,9 +62,7 @@ while true do
     elseif raw:byte(1) & 0x10 ~= 0 then
         print(string.format("Error flag set in status byte: 0x%02X", raw:byte(1)))
     else
-        local x = to_int16(raw:byte(2), raw:byte(3))
-        local y = to_int16(raw:byte(4), raw:byte(5))
-        local z = to_int16(raw:byte(6), raw:byte(7))
+        local x, y, z = string.unpack(">i2 i2 i2", raw, 2)
 
         print(string.format("Status: 0x%02X, raw counts X: %d, Y: %d, Z: %d",
             raw:byte(1), x, y, z))

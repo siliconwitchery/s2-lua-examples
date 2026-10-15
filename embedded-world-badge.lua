@@ -246,13 +246,12 @@ local function read_temperature()
         return nil
     end
 
-    local upper = result.data:byte(1)
-    local lower = result.data:byte(2)
+    local value = string.unpack(">I2", result.data)
 
-    -- The top three bits are alarm flags, and bit 4 is the sign
-    local temperature = ((upper & 0x0F) * 256 + lower) / 16.0
+    -- The top three bits are alarm flags, and bit 12 is the sign
+    local temperature = (value & 0x0FFF) / 16.0
 
-    if upper & 0x10 ~= 0 then
+    if value & 0x1000 ~= 0 then
         temperature = temperature - 256.0
     end
 
@@ -285,15 +284,8 @@ local function init_ens160(temperature)
     local temperature_calibration = math.floor(temperature + 273)
     local humidity_calibration = humidity << 9
 
-    device.i2c.write(ENS160_ADDRESS, string.char(
-        0x13,
-        (temperature_calibration & 0x03) << 6,
-        temperature_calibration >> 2), PORT_E)
-
-    device.i2c.write(ENS160_ADDRESS, string.char(
-        0x15,
-        humidity_calibration & 0xFF,
-        humidity_calibration >> 8), PORT_E)
+    device.i2c.write(ENS160_ADDRESS, string.pack("<B I2", 0x13, temperature_calibration << 6), PORT_E)
+    device.i2c.write(ENS160_ADDRESS, string.pack("<B I2", 0x15, humidity_calibration), PORT_E)
 end
 
 -- Read the air quality index (1 to 5), TVOC in ppb and eCO2 in ppm, or nil
@@ -317,13 +309,13 @@ local function read_ens160()
     if not response.success then
         return nil
     end
-    local tvoc = string.byte(response.data, 1) | string.byte(response.data, 2) << 8
+    local tvoc = string.unpack("<I2", response.data)
 
     response = device.i2c.write_read(ENS160_ADDRESS, "\x24", 2, PORT_E)
     if not response.success then
         return nil
     end
-    local eco2 = string.byte(response.data, 1) | string.byte(response.data, 2) << 8
+    local eco2 = string.unpack("<I2", response.data)
 
     return aqi, tvoc, eco2
 end
