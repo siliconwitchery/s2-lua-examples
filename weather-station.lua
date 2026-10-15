@@ -61,33 +61,10 @@ if not cal then
     error("Failed to read BMP280 calibration data")
 end
 
--- Unsigned 16-bit
-local function u16(lo, hi)
-    return string.byte(cal, lo) + string.byte(cal, hi) * 256
-end
-
--- Signed 16-bit
-local function s16(lo, hi)
-    local v = u16(lo, hi)
-    if v > 32767 then v = v - 65536 end
-    return v
-end
-
--- Temperature calibration
-local T1 = u16(1, 2)
-local T2 = s16(3, 4)
-local T3 = s16(5, 6)
-
--- Pressure calibration
-local P1 = u16(7, 8)
-local P2 = s16(9, 10)
-local P3 = s16(11, 12)
-local P4 = s16(13, 14)
-local P5 = s16(15, 16)
-local P6 = s16(17, 18)
-local P7 = s16(19, 20)
-local P8 = s16(21, 22)
-local P9 = s16(23, 24)
+-- Temperature then pressure calibration, little-endian 16-bit words where
+-- only T1 and P1 are unsigned
+local T1, T2, T3, P1, P2, P3, P4, P5, P6, P7, P8, P9 =
+    string.unpack("<I2 i2 i2 I2 i2 i2 i2 i2 i2 i2 i2 i2", cal)
 
 -- IIR filter x4 to smooth out door slams and gusts, which matters when we are
 -- looking for hPa scale changes over hours
@@ -130,8 +107,8 @@ local function read_bmp280()
     local raw = read_reg(0xF7, 6)
     if not raw then return nil end
 
-    local adc_P = (string.byte(raw, 1) * 65536 + string.byte(raw, 2) * 256 + string.byte(raw, 3)) // 16
-    local adc_T = (string.byte(raw, 4) * 65536 + string.byte(raw, 5) * 256 + string.byte(raw, 6)) // 16
+    local adc_P, adc_T = string.unpack(">I3 I3", raw)
+    adc_P, adc_T = adc_P >> 4, adc_T >> 4
 
     return compensate(adc_T, adc_P)
 end
@@ -164,8 +141,7 @@ local function read_sht45()
         return nil
     end
 
-    local raw_temperature = (string.byte(d, 1) << 8) | string.byte(d, 2)
-    local raw_humidity = (string.byte(d, 4) << 8) | string.byte(d, 5)
+    local raw_temperature, raw_humidity = string.unpack(">I2 x I2", d)
 
     local temperature = -45 + (175 * (raw_temperature / 65535))
     local humidity = -6 + (125 * (raw_humidity / 65535))

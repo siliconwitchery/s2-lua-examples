@@ -31,8 +31,7 @@ end
 -- the current and power registers to the shunt fitted on the board
 local shunt_cal = math.floor(819.2e6 * CURRENT_LSB * SHUNT_OHMS)
 
-device.i2c.write(INA237_ADDRESS, string.char(0x02, (shunt_cal >> 8) & 0xFF, shunt_cal & 0xFF),
-    PORT)
+device.i2c.write(INA237_ADDRESS, string.pack(">B I2", 0x02, shunt_cal), PORT)
 
 -- ADC config: continuous bus voltage, shunt and temperature, 16x averaging
 device.i2c.write(INA237_ADDRESS, "\x01\xFB\x6A", PORT)
@@ -46,21 +45,15 @@ while true do
 
     if voltage_reg.success and current_reg.success and power_reg.success then
         -- Bus voltage is 3.125mV per LSB
-        local voltage_word = (string.byte(voltage_reg.data, 1) << 8) | string.byte(voltage_reg.data, 2)
+        local voltage_word = string.unpack(">I2", voltage_reg.data)
         local voltage = voltage_word * 3.125e-3
 
         -- Current is a signed 16 bit value of CURRENT_LSB amps per LSB
-        local current_word = (string.byte(current_reg.data, 1) << 8) | string.byte(current_reg.data, 2)
-        local raw_current = current_word
-        if raw_current > 32767 then
-            raw_current = raw_current - 65536
-        end
-        local current = raw_current * CURRENT_LSB
+        local current_word = string.unpack(">I2", current_reg.data)
+        local current = string.unpack(">i2", current_reg.data) * CURRENT_LSB
 
         -- Power is a 24 bit value of 0.2 * CURRENT_LSB watts per LSB
-        local raw_power = (string.byte(power_reg.data, 1) << 16) |
-            (string.byte(power_reg.data, 2) << 8) |
-            string.byte(power_reg.data, 3)
+        local raw_power = string.unpack(">I3", power_reg.data)
         local power = raw_power * 0.2 * CURRENT_LSB
 
         print(string.format("VBUS: 0x%04X (%.3f V) | CURRENT: 0x%04X (%.3f A) | POWER: 0x%06X (%.3f W)",

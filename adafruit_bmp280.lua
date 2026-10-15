@@ -37,33 +37,10 @@ if not cal then
     error("Failed to read calibration data")
 end
 
--- Unsigned 16-bit
-local function u16(lo, hi)
-    return string.byte(cal, lo) + string.byte(cal, hi) * 256
-end
-
--- Signed 16-bit
-local function s16(lo, hi)
-    local v = u16(lo, hi)
-    if v > 32767 then v = v - 65536 end
-    return v
-end
-
--- Temperature calibration
-local T1 = u16(1, 2)
-local T2 = s16(3, 4)
-local T3 = s16(5, 6)
-
--- Pressure calibration
-local P1 = u16(7, 8)
-local P2 = s16(9, 10)
-local P3 = s16(11, 12)
-local P4 = s16(13, 14)
-local P5 = s16(15, 16)
-local P6 = s16(17, 18)
-local P7 = s16(19, 20)
-local P8 = s16(21, 22)
-local P9 = s16(23, 24)
+-- Temperature then pressure calibration, little-endian 16-bit words where
+-- only T1 and P1 are unsigned
+local T1, T2, T3, P1, P2, P3, P4, P5, P6, P7, P8, P9 =
+    string.unpack("<I2 i2 i2 I2 i2 i2 i2 i2 i2 i2 i2 i2", cal)
 
 -- Normal mode, temperature and pressure oversampling x1
 device.i2c.write(BMP280_ADDRESS, "\xF4\x27")
@@ -102,8 +79,8 @@ while true do
     local raw = read_reg(0xF7, 6)
 
     if raw then
-        local adc_P = (string.byte(raw, 1) * 65536 + string.byte(raw, 2) * 256 + string.byte(raw, 3)) // 16
-        local adc_T = (string.byte(raw, 4) * 65536 + string.byte(raw, 5) * 256 + string.byte(raw, 6)) // 16
+        local adc_P, adc_T = string.unpack(">I3 I3", raw)
+        adc_P, adc_T = adc_P >> 4, adc_T >> 4
 
         local temperature, pressure = compensate(adc_T, adc_P)
 

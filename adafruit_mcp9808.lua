@@ -25,19 +25,18 @@ while true do
     local result = device.i2c.write_read(MCP9808_ADDRESS, "\x05", 2)
 
     if result.success then
-        local upper = result.data:byte(1)
-        local lower = result.data:byte(2)
+        local value = string.unpack(">I2", result.data)
 
-        -- The upper 3 bits are alert flags and bit 4 is the sign, leaving a
+        -- The upper 3 bits are alert flags and bit 12 is the sign, leaving a
         -- 12 bit temperature in steps of 1/16th of a degree
-        local temperature = ((upper & 0x0F) * 256 + lower) / 16.0
+        local temperature = (value & 0x0FFF) / 16.0
 
         -- Apply two's complement for temperatures below 0 C
-        if upper & 0x10 ~= 0 then
+        if value & 0x1000 ~= 0 then
             temperature = temperature - 256
         end
 
-        print(string.format("Temperature register: 0x%02X%02X (%.2f C)", upper, lower, temperature))
+        print(string.format("Temperature register: 0x%04X (%.2f C)", value, temperature))
 
         -- Send the value to Superstack
         network.send_data {

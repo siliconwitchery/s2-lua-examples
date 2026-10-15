@@ -47,7 +47,7 @@ end
 
 print(string.format("ENS160 part ID: 0x%02X 0x%02X", string.byte(part_id, 1), string.byte(part_id, 2)))
 
-if (string.byte(part_id, 1) | (string.byte(part_id, 2) << 8)) ~= 0x0160 then
+if string.unpack("<I2", part_id) ~= 0x0160 then
     error("Unexpected ENS160 part ID. Expected 0x60 0x01")
 end
 
@@ -85,8 +85,7 @@ local function read_sht45()
         return nil
     end
 
-    local raw_temperature = (string.byte(d, 1) << 8) | string.byte(d, 2)
-    local raw_humidity = (string.byte(d, 4) << 8) | string.byte(d, 5)
+    local raw_temperature, raw_humidity = string.unpack(">I2 x I2", d)
 
     local temperature = -45 + (175 * (raw_temperature / 65535))
     local humidity = -6 + (125 * (raw_humidity / 65535))
@@ -104,8 +103,8 @@ local function write_ens160_ambient(temperature, humidity)
     local kelvin = math.floor((temperature + 273.15) * 64 + 0.5)
     local rh = math.floor(humidity * 512 + 0.5)
 
-    device.i2c.write(ENS160_ADDRESS, string.char(0x13, kelvin & 0xFF, (kelvin >> 8) & 0xFF), ENS160_PORT)
-    device.i2c.write(ENS160_ADDRESS, string.char(0x15, rh & 0xFF, (rh >> 8) & 0xFF), ENS160_PORT)
+    device.i2c.write(ENS160_ADDRESS, string.pack("<B I2", 0x13, kelvin), ENS160_PORT)
+    device.i2c.write(ENS160_ADDRESS, string.pack("<B I2", 0x15, rh), ENS160_PORT)
 end
 
 -- Read the air quality data if a fresh measurement is ready. Returns the
@@ -127,9 +126,8 @@ local function read_ens160()
     local data = ens160_read(0x21, 5)
     if not data then return nil end
 
-    local aqi = string.byte(data, 1) & 0x07
-    local tvoc = string.byte(data, 2) | (string.byte(data, 3) << 8)
-    local eco2 = string.byte(data, 4) | (string.byte(data, 5) << 8)
+    local aqi, tvoc, eco2 = string.unpack("<B I2 I2", data)
+    aqi = aqi & 0x07
 
     return { aqi = aqi, tvoc = tvoc, eco2 = eco2 }, validity
 end

@@ -19,11 +19,11 @@ end
 
 local function r16(reg)
     local response = device.i2c.write_read(VL53L0X_ADDRESS, string.char(reg), 2)
-    return (string.byte(response.data, 1) << 8) | string.byte(response.data, 2)
+    return string.unpack(">I2", response.data)
 end
 
 local function w16(reg, data)
-    device.i2c.write(VL53L0X_ADDRESS, string.char(reg, data >> 8, data & 0xFF))
+    device.i2c.write(VL53L0X_ADDRESS, string.pack(">B I2", reg, data))
 end
 
 -- Poll a register until one of the masked bits is set, erroring out after
@@ -325,7 +325,7 @@ while true do
     -- sits in the last two bytes. Out of range reads as 8190 or 8191
     wait_for_bits(0x13, 0x07, "Timeout waiting for measurement")
     local result = device.i2c.write_read(VL53L0X_ADDRESS, "\x14", 12)
-    local distance = (string.byte(result.data, 11) << 8) | string.byte(result.data, 12)
+    local distance = string.unpack(">I2", result.data, 11)
 
     w8(0x0B, 0x01) -- SYSTEM_INTERRUPT_CLEAR
 
