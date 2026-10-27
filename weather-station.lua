@@ -7,7 +7,10 @@
 -- tendency: a fall of more than 1.5 hPa means deteriorating weather, more
 -- than 3 hPa means rain is likely, and more than 6 hPa (or a fast fall on
 -- top of already low pressure) is a strong storm signal. The data collected
--- is sent to Superstack
+-- is sent to a web service
+
+-- Set this to the address of the web service that receives the readings
+local SERVER_URL = "https://example.com/readings"
 
 local SHT45_ADDRESS = 0x44
 
@@ -61,8 +64,9 @@ if not cal then
     error("Failed to read BMP280 calibration data")
 end
 
--- Temperature then pressure calibration, little-endian 16-bit words where
--- only T1 and P1 are unsigned
+-- Temperature then pressure calibration, twelve little-endian 16-bit words.
+-- In the format, < is little-endian, I2 is a uint16_t and i2 is an int16_t,
+-- so only T1 and P1 are unsigned
 local T1, T2, T3, P1, P2, P3, P4, P5, P6, P7, P8, P9 =
     string.unpack("<I2 i2 i2 I2 i2 i2 i2 i2 i2 i2 i2 i2", cal)
 
@@ -107,8 +111,10 @@ local function read_bmp280()
     local raw = read_reg(0xF7, 6)
     if not raw then return nil end
 
-    local adc_P, adc_T = string.unpack(">I3 I3", raw)
-    adc_P, adc_T = adc_P >> 4, adc_T >> 4
+    -- Pressure then temperature, 20 bits each across 6 bytes
+    local press_msb, press_lsb, press_xlsb, temp_msb, temp_lsb, temp_xlsb = raw:byte(1, 6)
+    local adc_P = (press_msb << 12) | (press_lsb << 4) | (press_xlsb >> 4)
+    local adc_T = (temp_msb << 12) | (temp_lsb << 4) | (temp_xlsb >> 4)
 
     return compensate(adc_T, adc_P)
 end
@@ -141,7 +147,9 @@ local function read_sht45()
         return nil
     end
 
-    local raw_temperature, raw_humidity = string.unpack(">I2 x I2", d)
+    -- Two big-endian uint16_t readings, each followed by its CRC byte
+    local raw_temperature = string.unpack(">I2", d, 1)
+    local raw_humidity = string.unpack(">I2", d, 4)
 
     local temperature = -45 + (175 * (raw_temperature / 65535))
     local humidity = -6 + (125 * (raw_humidity / 65535))
@@ -159,8 +167,12 @@ local function sea_level_pressure(pressure, temperature)
         (1 - 0.0065 * ALTITUDE_M / (temperature + 0.0065 * ALTITUDE_M + 273.15)) ^ 5.257
 end
 
--- Dew point using the Magnus formula
+-- Dew point using the Magnus formula. It has no value at 0% humidity, and
+-- json.encode raises an error on the NaN the formula would give, so the dew
+-- point is left out instead
 local function dew_point(temperature, humidity)
+    if humidity == 0 then return nil end
+
     local gamma = (17.62 * temperature) / (243.12 + temperature) + math.log(humidity / 100)
     return (243.12 * gamma) / (17.62 - gamma)
 end
@@ -244,9 +256,9 @@ while true do
             change_3h and string.format("%+.2f hPa", change_3h) or "n/a",
             description))
 
-        -- Send the values to Superstack. The tendencies are omitted until
-        -- enough history has been collected
-        network.send_data {
+        -- Send the values to the web service as JSON. The tendencies are
+        -- omitted until enough history has been collected
+        local body = json.encode {
             temperature = temperature,
             humidity = humidity,
             dew_point = dew,
@@ -257,6 +269,14 @@ while true do
             forecast_level = level,
             forecast = description
         }
+
+        local post_response, err = network.post(SERVER_URL, body, {
+            headers = { ["Content-Type"] = "application/json" }
+        })
+
+        if not post_response then
+            print("Send failed: " .. err)
+        end
     else
         print("Sensor read failed")
     end

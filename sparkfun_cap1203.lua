@@ -1,5 +1,8 @@
 -- Reads the three touch pads on a SparkFun Qwiic CAP1203 and sends the pad
--- states to Superstack whenever they change
+-- states to a web service whenever they change
+
+-- Set this to the address of the web service that receives the readings
+local SERVER_URL = "https://example.com/readings"
 
 local CAP1203_ADDRESS = 0x28
 
@@ -49,11 +52,20 @@ while true do
 
             print(string.format("Input status register: 0x%02X", pads))
 
-            network.send_data {
+            -- Send the pad states to the web service as JSON
+            local body = json.encode {
                 pad_1 = pads & 0x01 ~= 0,
                 pad_2 = pads & 0x02 ~= 0,
                 pad_3 = pads & 0x04 ~= 0
             }
+
+            local post_response, err = network.post(SERVER_URL, body, {
+                headers = { ["Content-Type"] = "application/json" }
+            })
+
+            if not post_response then
+                print("Send failed: " .. err)
+            end
         end
     end
 

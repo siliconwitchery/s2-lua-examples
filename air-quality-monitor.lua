@@ -4,7 +4,10 @@
 -- The SHT45 readings are fed into the ENS160 so its gas measurements are
 -- compensated for ambient conditions. The fan switches on when the air gets
 -- bad and off once it recovers, with hysteresis so it doesn't flap around
--- the thresholds. All readings are sent to Superstack
+-- the thresholds. All readings are sent to a web service
+
+-- Set this to the address of the web service that receives the readings
+local SERVER_URL = "https://example.com/readings"
 
 local SHT45_ADDRESS = 0x44
 local ENS160_ADDRESS = 0x53
@@ -47,6 +50,7 @@ end
 
 print(string.format("ENS160 part ID: 0x%02X 0x%02X", string.byte(part_id, 1), string.byte(part_id, 2)))
 
+-- In the format, < is little-endian and I2 is a uint16_t
 if string.unpack("<I2", part_id) ~= 0x0160 then
     error("Unexpected ENS160 part ID. Expected 0x60 0x01")
 end
@@ -85,7 +89,9 @@ local function read_sht45()
         return nil
     end
 
-    local raw_temperature, raw_humidity = string.unpack(">I2 x I2", d)
+    -- Two big-endian uint16_t readings, each followed by its CRC byte
+    local raw_temperature = string.unpack(">I2", d, 1)
+    local raw_humidity = string.unpack(">I2", d, 4)
 
     local temperature = -45 + (175 * (raw_temperature / 65535))
     local humidity = -6 + (125 * (raw_humidity / 65535))
@@ -98,7 +104,7 @@ end
 
 -- Feed the ambient conditions to the ENS160 so its gas measurements are
 -- compensated. TEMP_IN (0x13) is Kelvin x 64 and RH_IN (0x15) is %RH x 512,
--- both little-endian
+-- each written as the register (B, a uint8_t) then a little-endian uint16_t
 local function write_ens160_ambient(temperature, humidity)
     local kelvin = math.floor((temperature + 273.15) * 64 + 0.5)
     local rh = math.floor(humidity * 512 + 0.5)
@@ -123,6 +129,7 @@ local function read_ens160()
     end
 
     -- DATA_AQI, DATA_TVOC and DATA_ECO2 sit at consecutive registers 0x21-0x25
+    -- as a uint8_t followed by two little-endian uint16_t values
     local data = ens160_read(0x21, 5)
     if not data then return nil end
 
@@ -179,9 +186,9 @@ while true do
     if air then
         update_fan(air.eco2, air.tvoc)
 
-        -- Send the values to Superstack. Temperature and humidity are
-        -- omitted if the SHT45 read failed this cycle
-        network.send_data {
+        -- Send the values to the web service as JSON. Temperature and
+        -- humidity are omitted if the SHT45 read failed this cycle
+        local body = json.encode {
             temperature = temperature,
             humidity = humidity,
             air_quality_index = air.aqi,
@@ -189,6 +196,14 @@ while true do
             volatile_compounds = air.tvoc,
             fan_running = fan_running
         }
+
+        local post_response, err = network.post(SERVER_URL, body, {
+            headers = { ["Content-Type"] = "application/json" }
+        })
+
+        if not post_response then
+            print("Send failed: " .. err)
+        end
     elseif not validity then
         print("ENS160 read failed")
     end

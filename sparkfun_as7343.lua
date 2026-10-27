@@ -1,5 +1,9 @@
 -- Reads the 12 wavelength channels of an AS7343 spectral sensor (e.g. the
--- SparkFun Qwiic AS7343 board) once per second and sends them to Superstack
+-- SparkFun Qwiic AS7343 board) once per second and sends them to a web
+-- service
+
+-- Set this to the address of the web service that receives the readings
+local SERVER_URL = "https://example.com/readings"
 
 local AS7343_I2C_ADDRESS = 0x39
 
@@ -59,8 +63,13 @@ while true do
     device.i2c.write(AS7343_I2C_ADDRESS, "\xCD\x00")
 
     if response.success then
-        -- Channel data is 16 bits, low byte first
-        local channels = { string.unpack("<" .. string.rep("I2", 18), response.data) }
+        -- Each channel is a little-endian uint16_t, so channel n starts at
+        -- byte 2n - 1
+        local channels = {}
+
+        for n = 1, 18 do
+            channels[n] = string.unpack("<I2", response.data, 2 * n - 1)
+        end
 
         print(string.format("Counts: 450nm=%d 550nm=%d 640nm=%d",
             channels[1], channels[16], channels[10]))
@@ -70,8 +79,8 @@ while true do
         --   cycle 2: F2 425nm, F3 475nm, F4 515nm, F6 640nm,  VIS, FD
         --   cycle 3: F1 405nm, F7 690nm, F8 745nm, F5 550nm,  VIS, FD
         -- The indices skip the VIS (visible) and FD (flicker detection)
-        -- words at the end of each cycle
-        network.send_data {
+        -- words at the end of each cycle. Send them to the web service as JSON
+        local body = json.encode {
             ["450nm"] = channels[1],
             ["555nm"] = channels[2],
             ["600nm"] = channels[3],
@@ -85,6 +94,14 @@ while true do
             ["745nm"] = channels[15],
             ["550nm"] = channels[16],
         }
+
+        local post_response, err = network.post(SERVER_URL, body, {
+            headers = { ["Content-Type"] = "application/json" }
+        })
+
+        if not post_response then
+            print("Send failed: " .. err)
+        end
     else
         print("Data read failed")
     end

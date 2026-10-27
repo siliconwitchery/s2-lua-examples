@@ -3,7 +3,10 @@
 -- air quality sensor on port E. The ENS160 also responds at 0x53, so it must
 -- live on a different port to the NFC tag. The tag serves a URL, scans are
 -- counted and shown on the display along with temperature and eCO2 warnings,
--- and everything is reported to Superstack every 10 minutes
+-- and everything is reported to a web service every 10 minutes
+
+-- Set this to the address of the web service that receives the readings
+local SERVER_URL = "https://example.com/readings"
 
 local OLED_ADDRESS = 0x3C
 local ST25DV_ADDRESS = 0x53
@@ -22,7 +25,7 @@ local ECO2_WARNING = 1000 -- ppm
 
 -- The main loop runs on a 0.1 second tick. After a scan the display stays on
 -- for 200 ticks (20 seconds), showing a sleep countdown over the last 50, and
--- a report is sent to Superstack every 6000 ticks (10 minutes)
+-- a report is sent to the web service every 6000 ticks (10 minutes)
 local TICK_SECONDS = 0.1
 local POWER_SAVE_TICKS = 200
 local COUNTDOWN_TICKS = 50
@@ -246,7 +249,7 @@ local function read_temperature()
         return nil
     end
 
-    local value = string.unpack(">I2", result.data)
+    local value = string.unpack(">I2", result.data) -- big-endian uint16_t
 
     -- The top three bits are alarm flags, and bit 12 is the sign
     local temperature = (value & 0x0FFF) / 16.0
@@ -280,7 +283,8 @@ local function init_ens160(temperature)
     -- The badge has no humidity sensor, so assume 50% relative humidity
     local humidity = 50
 
-    -- TEMP_IN is Kelvin x 64 and RH_IN is %RH x 512, both little endian
+    -- TEMP_IN is Kelvin x 64 and RH_IN is %RH x 512, each written as the
+    -- register (B, a uint8_t) then a little-endian uint16_t
     local temperature_calibration = math.floor(temperature + 273)
     local humidity_calibration = humidity << 9
 
@@ -309,7 +313,7 @@ local function read_ens160()
     if not response.success then
         return nil
     end
-    local tvoc = string.unpack("<I2", response.data)
+    local tvoc = string.unpack("<I2", response.data) -- little-endian uint16_t
 
     response = device.i2c.write_read(ENS160_ADDRESS, "\x24", 2, PORT_E)
     if not response.success then
@@ -452,24 +456,32 @@ while true do
         end
     end
 
-    -- Report to Superstack every 10 minutes. The counter starts at zero so
-    -- that the first report goes out right away, and the air quality fields
-    -- are omitted until the ENS160 has produced a valid reading
+    -- Report to the web service as JSON every 10 minutes. The counter starts
+    -- at zero so that the first report goes out right away, and the air
+    -- quality fields are omitted until the ENS160 has produced a valid reading
     if data_log_counter == 0 then
         print(string.format(
-            "Reporting to Superstack: %.2f C | %s | %d scans",
+            "Reporting: %.2f C | %s | %d scans",
             temperature,
             eco2 and string.format("eCO2 %d ppm | TVOC %d ppb | AQI %d", eco2, tvoc, aqi)
                 or "air quality warming up",
             total_scans))
 
-        network.send_data {
+        local body = json.encode {
             temperature = temperature,
             air_quality_index = aqi,
             carbon_dioxide = eco2,
             volatile_compounds = tvoc,
             total_scans = total_scans
         }
+
+        local post_response, err = network.post(SERVER_URL, body, {
+            headers = { ["Content-Type"] = "application/json" }
+        })
+
+        if not post_response then
+            print("Send failed: " .. err)
+        end
 
         data_log_counter = DATA_LOG_TICKS
     end
