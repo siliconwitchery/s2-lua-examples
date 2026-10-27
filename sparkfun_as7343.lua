@@ -1,5 +1,9 @@
 -- Reads the 12 wavelength channels of an AS7343 spectral sensor (e.g. the
--- SparkFun Qwiic AS7343 board) once per second and sends them to Superstack
+-- SparkFun Qwiic AS7343 board) once per second and sends them to a web
+-- service
+
+-- Set this to the address of the web service that receives the readings
+local SERVER_URL = "https://example.com/readings"
 
 local AS7343_I2C_ADDRESS = 0x39
 
@@ -42,11 +46,6 @@ device.i2c.write(AS7343_I2C_ADDRESS, "\xBF\x00")
 device.i2c.write(AS7343_I2C_ADDRESS, "\x80\x83")
 device.i2c.write(AS7343_I2C_ADDRESS, "\xBF\x00")
 
--- Channel data is 16 bits, low byte first
-local function channel(data, offset)
-    return string.byte(data, offset) | string.byte(data, offset + 1) << 8
-end
-
 while true do
     -- LED: turn on the white illumination LED connected to the LDR pin
     device.i2c.write(AS7343_I2C_ADDRESS, "\xCD\x80")
@@ -64,31 +63,45 @@ while true do
     device.i2c.write(AS7343_I2C_ADDRESS, "\xCD\x00")
 
     if response.success then
-        local data = response.data
+        -- Each channel is a little-endian uint16_t, so channel n starts at
+        -- byte 2n - 1
+        local channels = {}
+
+        for n = 1, 18 do
+            channels[n] = string.unpack("<I2", response.data, 2 * n - 1)
+        end
 
         print(string.format("Counts: 450nm=%d 550nm=%d 640nm=%d",
-            channel(data, 1), channel(data, 31), channel(data, 19)))
+            channels[1], channels[16], channels[10]))
 
         -- The auto-SMUX readout is three cycles of six channels each:
         --   cycle 1: FZ 450nm, FY 555nm, FXL 600nm, NIR 855nm, VIS, FD
         --   cycle 2: F2 425nm, F3 475nm, F4 515nm, F6 640nm,  VIS, FD
         --   cycle 3: F1 405nm, F7 690nm, F8 745nm, F5 550nm,  VIS, FD
-        -- The byte offsets skip the VIS (visible) and FD (flicker detection)
-        -- words at the end of each cycle
-        network.send_data {
-            ["450nm"] = channel(data, 1),
-            ["555nm"] = channel(data, 3),
-            ["600nm"] = channel(data, 5),
-            ["855nm"] = channel(data, 7),
-            ["425nm"] = channel(data, 13),
-            ["475nm"] = channel(data, 15),
-            ["515nm"] = channel(data, 17),
-            ["640nm"] = channel(data, 19),
-            ["405nm"] = channel(data, 25),
-            ["690nm"] = channel(data, 27),
-            ["745nm"] = channel(data, 29),
-            ["550nm"] = channel(data, 31),
+        -- The indices skip the VIS (visible) and FD (flicker detection)
+        -- words at the end of each cycle. Send them to the web service as JSON
+        local body = json.encode {
+            ["450nm"] = channels[1],
+            ["555nm"] = channels[2],
+            ["600nm"] = channels[3],
+            ["855nm"] = channels[4],
+            ["425nm"] = channels[7],
+            ["475nm"] = channels[8],
+            ["515nm"] = channels[9],
+            ["640nm"] = channels[10],
+            ["405nm"] = channels[13],
+            ["690nm"] = channels[14],
+            ["745nm"] = channels[15],
+            ["550nm"] = channels[16],
         }
+
+        local post_response, err = network.post(SERVER_URL, body, {
+            headers = { ["Content-Type"] = "application/json" }
+        })
+
+        if not post_response then
+            print("Send failed: " .. err)
+        end
     else
         print("Data read failed")
     end

@@ -1,5 +1,9 @@
 -- VL53L0X time-of-flight distance sensor on the default I2C port. The init
--- flow is ported from ST's reference driver and its order is load-bearing
+-- flow is ported from ST's reference driver and its order is load-bearing.
+-- The distance is sent to a web service
+
+-- Set this to the address of the web service that receives the readings
+local SERVER_URL = "https://example.com/readings"
 
 local VL53L0X_ADDRESS = 0x29
 
@@ -19,11 +23,12 @@ end
 
 local function r16(reg)
     local response = device.i2c.write_read(VL53L0X_ADDRESS, string.char(reg), 2)
-    return (string.byte(response.data, 1) << 8) | string.byte(response.data, 2)
+    return string.unpack(">I2", response.data) -- big-endian uint16_t
 end
 
 local function w16(reg, data)
-    device.i2c.write(VL53L0X_ADDRESS, string.char(reg, data >> 8, data & 0xFF))
+    -- The register as a uint8_t (B), then data as a big-endian uint16_t
+    device.i2c.write(VL53L0X_ADDRESS, string.pack(">B I2", reg, data))
 end
 
 -- Poll a register until one of the masked bits is set, erroring out after
@@ -322,19 +327,28 @@ while true do
     r8(0x00)       -- Read back once, as the reference driver flow does
 
     -- Wait for the sample, then read the result registers. The range in mm
-    -- sits in the last two bytes. Out of range reads as 8190 or 8191
+    -- sits in the last two bytes, so unpacking starts at byte 11. Out of
+    -- range reads as 8190 or 8191
     wait_for_bits(0x13, 0x07, "Timeout waiting for measurement")
     local result = device.i2c.write_read(VL53L0X_ADDRESS, "\x14", 12)
-    local distance = (string.byte(result.data, 11) << 8) | string.byte(result.data, 12)
+    local distance = string.unpack(">I2", result.data, 11)
 
     w8(0x0B, 0x01) -- SYSTEM_INTERRUPT_CLEAR
 
     print(string.format("Distance: %d mm", distance))
 
-    -- Send the value to Superstack
-    network.send_data {
+    -- Send the value to the web service as JSON
+    local body = json.encode {
         distance = distance
     }
+
+    local post_response, err = network.post(SERVER_URL, body, {
+        headers = { ["Content-Type"] = "application/json" }
+    })
+
+    if not post_response then
+        print("Send failed: " .. err)
+    end
 
     device.sleep(1)
 end

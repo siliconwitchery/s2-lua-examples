@@ -1,6 +1,9 @@
--- Read ambient light from a VCNL4040 and send it to Superstack.
+-- Read ambient light from a VCNL4040 and send it to a web service.
 -- Registers are 16-bit little-endian and are accessed by writing the command
 -- code as one transaction, then reading two bytes (lsb then msb) as another
+
+-- Set this to the address of the web service that receives the readings
+local SERVER_URL = "https://example.com/readings"
 
 local VCNL4040_ADDRESS = 0x60
 
@@ -21,7 +24,8 @@ end
 
 print(string.format("ID register: 0x%02X 0x%02X", id.data:byte(1), id.data:byte(2)))
 
-if (id.data:byte(1) | (id.data:byte(2) << 8)) ~= 0x0186 then
+-- In the format, < is little-endian and I2 is a uint16_t
+if string.unpack("<I2", id.data) ~= 0x0186 then
     error("Unexpected device ID. Expected 0x86 0x01")
 end
 
@@ -39,17 +43,25 @@ while true do
     local result = device.i2c.read(VCNL4040_ADDRESS, 2)
 
     if result.success then
-        local counts = result.data:byte(1) | (result.data:byte(2) << 8)
+        local counts = string.unpack("<I2", result.data)
 
         -- At 80ms integration time each count is 0.1 lux
         local light = counts * 0.1
 
         print(string.format("ALS register: %d counts", counts))
 
-        -- Send the value to Superstack
-        network.send_data {
+        -- Send the value to the web service as JSON
+        local body = json.encode {
             light = light
         }
+
+        local post_response, err = network.post(SERVER_URL, body, {
+            headers = { ["Content-Type"] = "application/json" }
+        })
+
+        if not post_response then
+            print("Send failed: " .. err)
+        end
     else
         print("ALS read failed")
     end

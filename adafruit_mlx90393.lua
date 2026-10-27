@@ -1,5 +1,8 @@
 -- Reads the raw magnetic field from an MLX90393 magnetometer (Adafruit
--- breakout, default address) and sends the X, Y and Z counts to Superstack
+-- breakout, default address) and sends the X, Y and Z counts to a web service
+
+-- Set this to the address of the web service that receives the readings
+local SERVER_URL = "https://example.com/readings"
 
 local MLX90393_ADDRESS = 0x18
 
@@ -28,15 +31,6 @@ local function command(cmd, num_bytes)
     end
 
     return response.data
-end
-
--- Big-endian signed 16-bit
-local function to_int16(hi, lo)
-    local value = (hi << 8) | lo
-    if value >= 0x8000 then
-        value = value - 0x10000
-    end
-    return value
 end
 
 -- Exit any running measurement mode before resetting. This also doubles as a
@@ -71,20 +65,28 @@ while true do
     elseif raw:byte(1) & 0x10 ~= 0 then
         print(string.format("Error flag set in status byte: 0x%02X", raw:byte(1)))
     else
-        local x = to_int16(raw:byte(2), raw:byte(3))
-        local y = to_int16(raw:byte(4), raw:byte(5))
-        local z = to_int16(raw:byte(6), raw:byte(7))
+        -- Starting at byte 2, after the status byte, read three values. In
+        -- the format, > is big-endian and i2 is an int16_t
+        local x, y, z = string.unpack(">i2 i2 i2", raw, 2)
 
         print(string.format("Status: 0x%02X, raw counts X: %d, Y: %d, Z: %d",
             raw:byte(1), x, y, z))
 
-        -- Send the raw counts to Superstack. Their scale in uT depends on
-        -- the configured gain and resolution
-        network.send_data {
+        -- Send the raw counts to the web service as JSON. Their scale in uT
+        -- depends on the configured gain and resolution
+        local body = json.encode {
             x = x,
             y = y,
             z = z
         }
+
+        local post_response, err = network.post(SERVER_URL, body, {
+            headers = { ["Content-Type"] = "application/json" }
+        })
+
+        if not post_response then
+            print("Send failed: " .. err)
+        end
     end
 
     device.sleep(2)

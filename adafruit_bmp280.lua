@@ -1,6 +1,9 @@
 -- Minimal example for the BMP280 barometric pressure sensor. See
 -- weather-station.lua for a complete application built around this sensor
 
+-- Set this to the address of the web service that receives the readings
+local SERVER_URL = "https://example.com/readings"
+
 local BMP280_ADDRESS = 0x77 -- 0x76 if the SDO pin is pulled low
 
 -- Sensor requires 3.3V power
@@ -37,33 +40,11 @@ if not cal then
     error("Failed to read calibration data")
 end
 
--- Unsigned 16-bit
-local function u16(lo, hi)
-    return string.byte(cal, lo) + string.byte(cal, hi) * 256
-end
-
--- Signed 16-bit
-local function s16(lo, hi)
-    local v = u16(lo, hi)
-    if v > 32767 then v = v - 65536 end
-    return v
-end
-
--- Temperature calibration
-local T1 = u16(1, 2)
-local T2 = s16(3, 4)
-local T3 = s16(5, 6)
-
--- Pressure calibration
-local P1 = u16(7, 8)
-local P2 = s16(9, 10)
-local P3 = s16(11, 12)
-local P4 = s16(13, 14)
-local P5 = s16(15, 16)
-local P6 = s16(17, 18)
-local P7 = s16(19, 20)
-local P8 = s16(21, 22)
-local P9 = s16(23, 24)
+-- Temperature then pressure calibration, twelve little-endian 16-bit words.
+-- In the format, < is little-endian, I2 is a uint16_t and i2 is an int16_t,
+-- so only T1 and P1 are unsigned
+local T1, T2, T3, P1, P2, P3, P4, P5, P6, P7, P8, P9 =
+    string.unpack("<I2 i2 i2 I2 i2 i2 i2 i2 i2 i2 i2 i2", cal)
 
 -- Normal mode, temperature and pressure oversampling x1
 device.i2c.write(BMP280_ADDRESS, "\xF4\x27")
@@ -102,18 +83,27 @@ while true do
     local raw = read_reg(0xF7, 6)
 
     if raw then
-        local adc_P = (string.byte(raw, 1) * 65536 + string.byte(raw, 2) * 256 + string.byte(raw, 3)) // 16
-        local adc_T = (string.byte(raw, 4) * 65536 + string.byte(raw, 5) * 256 + string.byte(raw, 6)) // 16
+        local press_msb, press_lsb, press_xlsb, temp_msb, temp_lsb, temp_xlsb = raw:byte(1, 6)
+        local adc_P = (press_msb << 12) | (press_lsb << 4) | (press_xlsb >> 4)
+        local adc_T = (temp_msb << 12) | (temp_lsb << 4) | (temp_xlsb >> 4)
 
         local temperature, pressure = compensate(adc_T, adc_P)
 
         print(string.format("Raw ADC: T=%d P=%d (%.2f C, %.2f hPa)", adc_T, adc_P, temperature, pressure))
 
-        -- Send the values to Superstack
-        network.send_data {
+        -- Send the values to the web service as JSON
+        local body = json.encode {
             temperature = temperature,
             pressure = pressure
         }
+
+        local post_response, err = network.post(SERVER_URL, body, {
+            headers = { ["Content-Type"] = "application/json" }
+        })
+
+        if not post_response then
+            print("Send failed: " .. err)
+        end
     else
         print("Measurement read failed")
     end
